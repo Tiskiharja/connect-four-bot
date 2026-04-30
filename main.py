@@ -1,3 +1,5 @@
+import time
+
 ROWS = 6
 COLS = 7
 CONNECT = 4
@@ -5,6 +7,11 @@ CONNECT = 4
 CENTER_FIRST = (3, 2, 4, 1, 5, 0, 6)
 WIN_SCORE = 1_000_000
 MAX_CACHE_SIZE = 75_000
+MOVE_TIME_LIMIT_SECONDS = 0.90
+
+
+class _SearchTimeout(Exception):
+    pass
 
 
 def make_move(board, player):
@@ -15,6 +22,7 @@ def make_move(board, player):
     player : int -- which player we are (1 or 2)
     return : int -- column to drop our piece into (0-6)
     """
+    deadline = time.perf_counter() + MOVE_TIME_LIMIT_SECONDS
     valid_moves = _valid_moves(board)
     if not valid_moves:
         return 0
@@ -36,32 +44,62 @@ def make_move(board, player):
     safe_moves = _safe_moves(board, valid_moves, player)
     search_moves = safe_moves or valid_moves
 
-    depth = _search_depth(board)
-    best_col = _choose_search_move(board, depth, search_moves, player)
+    max_depth = _max_search_depth(board)
+    best_col = _choose_search_move(board, max_depth, search_moves, player, deadline)
 
     if best_col in valid_moves:
         return best_col
     return _ordered_moves(valid_moves)[0]
 
 
-def _search_depth(board):
+def _max_search_depth(board):
     pieces = sum(1 for row in board for cell in row if cell != 0)
     if pieces >= 28:
+        return 9
+    if pieces >= 14:
         return 7
     return 5
 
 
-def _choose_search_move(board, depth, candidate_moves, player):
+def _choose_search_move(board, max_depth, candidate_moves, player, deadline):
+    ordered = _ordered_moves(candidate_moves)
+    if not ordered:
+        return 0
+
     opponent = _other_player(player)
     cache = {}
+    best_col = ordered[0]
+
+    for depth in range(1, max_depth + 1):
+        if _time_is_up(deadline):
+            break
+
+        try:
+            score, col = _search_root(board, depth, ordered, opponent, player, cache, deadline)
+        except _SearchTimeout:
+            break
+
+        if col in candidate_moves:
+            best_col = col
+
+        if abs(score) >= WIN_SCORE:
+            break
+
+    return best_col
+
+
+def _search_root(board, depth, ordered_moves, next_player, root_player, cache, deadline):
     best_score = -float("inf")
-    best_col = _ordered_moves(candidate_moves)[0]
+    best_col = ordered_moves[0]
     alpha = -float("inf")
     beta = float("inf")
 
-    for col in _ordered_moves(candidate_moves):
-        next_board = _drop_piece(board, col, player)
-        score, _ = _minimax(next_board, depth - 1, alpha, beta, opponent, player, cache)
+    for col in ordered_moves:
+        if _time_is_up(deadline):
+            raise _SearchTimeout
+
+        next_board = _drop_piece(board, col, root_player)
+        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline)
 
         if score > best_score:
             best_score = score
@@ -69,10 +107,13 @@ def _choose_search_move(board, depth, candidate_moves, player):
 
         alpha = max(alpha, best_score)
 
-    return best_col
+    return best_score, best_col
 
 
-def _minimax(board, depth, alpha, beta, current_player, root_player, cache):
+def _minimax(board, depth, alpha, beta, current_player, root_player, cache, deadline):
+    if _time_is_up(deadline):
+        raise _SearchTimeout
+
     cache_key = (_board_key(board), depth, current_player, root_player)
     cached = cache.get(cache_key)
     if cached is not None:
@@ -98,7 +139,7 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache):
 
         for col in ordered:
             next_board = _drop_piece(board, col, current_player)
-            score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache)
+            score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline)
 
             if score > best_score:
                 best_score = score
@@ -119,7 +160,7 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache):
 
     for col in ordered:
         next_board = _drop_piece(board, col, current_player)
-        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache)
+        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline)
 
         if score < best_score:
             best_score = score
@@ -140,6 +181,10 @@ def _cache_result(cache, key, result):
     if len(cache) >= MAX_CACHE_SIZE:
         return
     cache[key] = result
+
+
+def _time_is_up(deadline):
+    return time.perf_counter() >= deadline
 
 
 def _board_key(board):

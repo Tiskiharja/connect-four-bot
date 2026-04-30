@@ -1,6 +1,7 @@
+import time
 import unittest
 
-from main import COLS, ROWS, _drop_piece, _has_won, _safe_moves, make_move
+from main import COLS, MOVE_TIME_LIMIT_SECONDS, ROWS, _drop_piece, _has_won, _safe_moves, make_move
 
 
 def empty_board():
@@ -78,6 +79,14 @@ class ConnectFourBotTest(unittest.TestCase):
 
         self.assertNotIn(3, _safe_moves(board, list(range(COLS)), 1))
         self.assertNotEqual(make_move(board, 1), 3)
+
+    def test_move_stays_under_one_second_budget(self):
+        start = time.perf_counter()
+        move = make_move(empty_board(), 1)
+        elapsed = time.perf_counter() - start
+
+        self.assertEqual(move, 3)
+        self.assertLess(elapsed, MOVE_TIME_LIMIT_SECONDS + 0.10)
 
 
 if __name__ == "__main__":
