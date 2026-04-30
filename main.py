@@ -95,9 +95,7 @@ def make_move(board, player):
     stats["safe_moves"] = len(safe_moves)
     stats["candidate_moves"] = len(search_moves)
 
-    max_depth = _max_search_depth(stats["pieces"])
-    stats["max_depth"] = max_depth
-    best_col = _choose_search_move(cells, heights, max_depth, search_moves, player, deadline, stats)
+    best_col = _choose_search_move(cells, heights, ROWS * COLS, search_moves, player, deadline, stats)
 
     if best_col in valid_moves:
         _record_search_stats(stats, best_col, "search", start, deadline)
@@ -115,7 +113,6 @@ def _new_search_stats(board, player):
         "valid_moves": 0,
         "safe_moves": 0,
         "candidate_moves": 0,
-        "max_depth": 0,
         "depth_reached": 0,
         "best_score": None,
         "nodes": 0,
@@ -142,14 +139,6 @@ def _record_search_stats(stats, selected_move, action, start, deadline):
     _LAST_SEARCH_STATS = dict(stats)
 
 
-def _max_search_depth(pieces):
-    if pieces >= 28:
-        return 8
-    if pieces >= 14:
-        return 7
-    return 6
-
-
 def _choose_search_move(cells, heights, max_depth, candidate_moves, player, deadline, stats):
     ordered = _ordered_position_moves(cells, heights, candidate_moves, player, tactical=True)
     if not ordered:
@@ -158,9 +147,13 @@ def _choose_search_move(cells, heights, max_depth, candidate_moves, player, dead
     opponent = _other_player(player)
     cache = {}
     best_col = ordered[0]
+    start = time.perf_counter()
 
     for depth in range(1, max_depth + 1):
-        if _time_is_up(deadline):
+        now = time.perf_counter()
+        remaining = deadline - now
+        elapsed = now - start
+        if remaining <= 0 or (depth > 1 and elapsed > 0.5 * remaining):
             break
 
         try:
@@ -171,6 +164,8 @@ def _choose_search_move(cells, heights, max_depth, candidate_moves, player, dead
 
         if col in candidate_moves:
             best_col = col
+            if best_col != ordered[0]:
+                ordered = [best_col] + [c for c in ordered if c != best_col]
 
         stats["depth_reached"] = depth
         stats["best_score"] = score
