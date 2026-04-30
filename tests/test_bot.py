@@ -1,7 +1,17 @@
-import time
 import unittest
+import time
 
-from main import COLS, MOVE_TIME_LIMIT_SECONDS, ROWS, _drop_piece, _has_won, _safe_moves, make_move
+from main import (
+    COLS,
+    MOVE_TIME_LIMIT_SECONDS,
+    ROWS,
+    WIN_LINES,
+    _drop_piece,
+    _has_won,
+    _safe_moves,
+    get_last_search_stats,
+    make_move,
+)
 
 
 def empty_board():
@@ -9,6 +19,10 @@ def empty_board():
 
 
 class ConnectFourBotTest(unittest.TestCase):
+    def test_precomputes_classic_board_win_lines(self):
+        self.assertEqual(len(WIN_LINES), 69)
+        self.assertEqual(len(set(WIN_LINES)), 69)
+
     def test_empty_board_prefers_center(self):
         self.assertEqual(make_move(empty_board(), 1), 3)
 
@@ -87,6 +101,30 @@ class ConnectFourBotTest(unittest.TestCase):
 
         self.assertEqual(move, 3)
         self.assertLess(elapsed, MOVE_TIME_LIMIT_SECONDS + 0.10)
+
+    def test_records_search_stats(self):
+        move = make_move(empty_board(), 1)
+        stats = get_last_search_stats()
+
+        self.assertEqual(stats["selected_move"], move)
+        self.assertEqual(stats["action"], "search")
+        self.assertGreater(stats["depth_reached"], 0)
+        self.assertGreater(stats["nodes"], 0)
+        self.assertIn("elapsed_seconds", stats)
+
+    def test_records_immediate_action_stats(self):
+        board = empty_board()
+        board[5][0] = 1
+        board[5][1] = 1
+        board[5][2] = 1
+
+        move = make_move(board, 1)
+        stats = get_last_search_stats()
+
+        self.assertEqual(move, 3)
+        self.assertEqual(stats["selected_move"], 3)
+        self.assertEqual(stats["action"], "immediate_win")
+        self.assertEqual(stats["depth_reached"], 0)
 
 
 if __name__ == "__main__":

@@ -25,3 +25,8 @@ python3 harness.py --bot-a bot --bot-b bot --games 2 --show-games
 
 Colors alternate by default so both bots get games as red and yellow. Use `--fixed-colors`
 to keep bot A as red and bot B as yellow.
+
+For the main bot, the harness also reports search depth, searched nodes, cache hit rate,
+internal iterative-deepening timeouts, action mix, and remaining time-budget margin.
+The bot uses an internal 0.85 second move budget to leave room under a 1.0 second
+playground limit.

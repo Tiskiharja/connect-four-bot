@@ -7,11 +7,42 @@ CONNECT = 4
 CENTER_FIRST = (3, 2, 4, 1, 5, 0, 6)
 WIN_SCORE = 1_000_000
 MAX_CACHE_SIZE = 75_000
-MOVE_TIME_LIMIT_SECONDS = 0.90
+MOVE_TIME_LIMIT_SECONDS = 0.85
+
+_LAST_SEARCH_STATS = {}
 
 
 class _SearchTimeout(Exception):
     pass
+
+
+def _build_win_lines():
+    lines = []
+
+    for row in range(ROWS):
+        for col in range(COLS - CONNECT + 1):
+            lines.append(tuple((row, col + offset) for offset in range(CONNECT)))
+
+    for col in range(COLS):
+        for row in range(ROWS - CONNECT + 1):
+            lines.append(tuple((row + offset, col) for offset in range(CONNECT)))
+
+    for row in range(ROWS - CONNECT + 1):
+        for col in range(COLS - CONNECT + 1):
+            lines.append(tuple((row + offset, col + offset) for offset in range(CONNECT)))
+
+    for row in range(ROWS - CONNECT + 1):
+        for col in range(CONNECT - 1, COLS):
+            lines.append(tuple((row + offset, col - offset) for offset in range(CONNECT)))
+
+    return tuple(lines)
+
+
+WIN_LINES = _build_win_lines()
+
+
+def get_last_search_stats():
+    return dict(_LAST_SEARCH_STATS)
 
 
 def make_move(board, player):
@@ -22,9 +53,15 @@ def make_move(board, player):
     player : int -- which player we are (1 or 2)
     return : int -- column to drop our piece into (0-6)
     """
-    deadline = time.perf_counter() + MOVE_TIME_LIMIT_SECONDS
+    start = time.perf_counter()
+    deadline = start + MOVE_TIME_LIMIT_SECONDS
+    stats = _new_search_stats(board, player)
+
     valid_moves = _valid_moves(board)
+    stats["valid_moves"] = len(valid_moves)
+
     if not valid_moves:
+        _record_search_stats(stats, 0, "no_moves", start, deadline)
         return 0
 
     opponent = _other_player(player)
@@ -33,23 +70,66 @@ def make_move(board, player):
     for col in _ordered_moves(valid_moves):
         next_board = _drop_piece(board, col, player)
         if _has_won(next_board, player):
+            _record_search_stats(stats, col, "immediate_win", start, deadline)
             return col
 
     # Block an immediate loss.
     for col in _ordered_moves(valid_moves):
         next_board = _drop_piece(board, col, opponent)
         if _has_won(next_board, opponent):
+            _record_search_stats(stats, col, "immediate_block", start, deadline)
             return col
 
     safe_moves = _safe_moves(board, valid_moves, player)
     search_moves = safe_moves or valid_moves
+    stats["safe_moves"] = len(safe_moves)
+    stats["candidate_moves"] = len(search_moves)
 
     max_depth = _max_search_depth(board)
-    best_col = _choose_search_move(board, max_depth, search_moves, player, deadline)
+    stats["max_depth"] = max_depth
+    best_col = _choose_search_move(board, max_depth, search_moves, player, deadline, stats)
 
     if best_col in valid_moves:
+        _record_search_stats(stats, best_col, "search", start, deadline)
         return best_col
-    return _ordered_moves(valid_moves)[0]
+
+    fallback = _ordered_moves(valid_moves)[0]
+    _record_search_stats(stats, fallback, "fallback", start, deadline)
+    return fallback
+
+
+def _new_search_stats(board, player):
+    return {
+        "player": player,
+        "pieces": sum(1 for row in board for cell in row if cell != 0),
+        "valid_moves": 0,
+        "safe_moves": 0,
+        "candidate_moves": 0,
+        "max_depth": 0,
+        "depth_reached": 0,
+        "best_score": None,
+        "nodes": 0,
+        "root_moves": 0,
+        "cache_hits": 0,
+        "cache_stores": 0,
+        "cache_size": 0,
+        "timed_out": False,
+        "action": "",
+        "selected_move": None,
+        "elapsed_seconds": 0.0,
+        "deadline_margin_seconds": 0.0,
+    }
+
+
+def _record_search_stats(stats, selected_move, action, start, deadline):
+    global _LAST_SEARCH_STATS
+
+    now = time.perf_counter()
+    stats["action"] = action
+    stats["selected_move"] = selected_move
+    stats["elapsed_seconds"] = now - start
+    stats["deadline_margin_seconds"] = deadline - now
+    _LAST_SEARCH_STATS = dict(stats)
 
 
 def _max_search_depth(board):
@@ -61,7 +141,7 @@ def _max_search_depth(board):
     return 5
 
 
-def _choose_search_move(board, max_depth, candidate_moves, player, deadline):
+def _choose_search_move(board, max_depth, candidate_moves, player, deadline, stats):
     ordered = _ordered_moves(candidate_moves)
     if not ordered:
         return 0
@@ -75,12 +155,17 @@ def _choose_search_move(board, max_depth, candidate_moves, player, deadline):
             break
 
         try:
-            score, col = _search_root(board, depth, ordered, opponent, player, cache, deadline)
+            score, col = _search_root(board, depth, ordered, opponent, player, cache, deadline, stats)
         except _SearchTimeout:
+            stats["timed_out"] = True
             break
 
         if col in candidate_moves:
             best_col = col
+
+        stats["depth_reached"] = depth
+        stats["best_score"] = score
+        stats["cache_size"] = len(cache)
 
         if abs(score) >= WIN_SCORE:
             break
@@ -88,7 +173,7 @@ def _choose_search_move(board, max_depth, candidate_moves, player, deadline):
     return best_col
 
 
-def _search_root(board, depth, ordered_moves, next_player, root_player, cache, deadline):
+def _search_root(board, depth, ordered_moves, next_player, root_player, cache, deadline, stats):
     best_score = -float("inf")
     best_col = ordered_moves[0]
     alpha = -float("inf")
@@ -98,8 +183,9 @@ def _search_root(board, depth, ordered_moves, next_player, root_player, cache, d
         if _time_is_up(deadline):
             raise _SearchTimeout
 
+        stats["root_moves"] += 1
         next_board = _drop_piece(board, col, root_player)
-        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline)
+        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline, stats)
 
         if score > best_score:
             best_score = score
@@ -110,13 +196,16 @@ def _search_root(board, depth, ordered_moves, next_player, root_player, cache, d
     return best_score, best_col
 
 
-def _minimax(board, depth, alpha, beta, current_player, root_player, cache, deadline):
+def _minimax(board, depth, alpha, beta, current_player, root_player, cache, deadline, stats):
     if _time_is_up(deadline):
         raise _SearchTimeout
+
+    stats["nodes"] += 1
 
     cache_key = (_board_key(board), depth, current_player, root_player)
     cached = cache.get(cache_key)
     if cached is not None:
+        stats["cache_hits"] += 1
         return cached
 
     valid_moves = _valid_moves(board)
@@ -139,7 +228,7 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache, dead
 
         for col in ordered:
             next_board = _drop_piece(board, col, current_player)
-            score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline)
+            score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline, stats)
 
             if score > best_score:
                 best_score = score
@@ -152,7 +241,7 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache, dead
 
         result = best_score, best_col
         if exact_score:
-            _cache_result(cache, cache_key, result)
+            _cache_result(cache, cache_key, result, stats)
         return result
 
     best_score = float("inf")
@@ -160,7 +249,7 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache, dead
 
     for col in ordered:
         next_board = _drop_piece(board, col, current_player)
-        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline)
+        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline, stats)
 
         if score < best_score:
             best_score = score
@@ -173,14 +262,15 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache, dead
 
     result = best_score, best_col
     if exact_score:
-        _cache_result(cache, cache_key, result)
+        _cache_result(cache, cache_key, result, stats)
     return result
 
 
-def _cache_result(cache, key, result):
+def _cache_result(cache, key, result, stats):
     if len(cache) >= MAX_CACHE_SIZE:
         return
     cache[key] = result
+    stats["cache_stores"] += 1
 
 
 def _time_is_up(deadline):
@@ -236,33 +326,10 @@ def _other_player(player):
 
 
 def _has_won(board, player):
-    for row in range(ROWS):
-        for col in range(COLS):
-            if board[row][col] != player:
-                continue
-
-            if (
-                _count_direction(board, row, col, 0, 1, player) >= CONNECT
-                or _count_direction(board, row, col, 1, 0, player) >= CONNECT
-                or _count_direction(board, row, col, 1, 1, player) >= CONNECT
-                or _count_direction(board, row, col, 1, -1, player) >= CONNECT
-            ):
-                return True
-
+    for line in WIN_LINES:
+        if all(board[row][col] == player for row, col in line):
+            return True
     return False
-
-
-def _count_direction(board, start_row, start_col, row_step, col_step, player):
-    count = 0
-    row = start_row
-    col = start_col
-
-    while 0 <= row < ROWS and 0 <= col < COLS and board[row][col] == player:
-        count += 1
-        row += row_step
-        col += col_step
-
-    return count
 
 
 def _evaluate_board(board, player):
@@ -284,35 +351,25 @@ def _evaluate_board(board, player):
     if opponent_wins >= 2:
         score -= 25_000
 
-    for window in _windows(board):
-        score += _score_window(window, player)
+    for line in WIN_LINES:
+        score += _score_line(board, line, player, opponent)
 
     return score
 
 
-def _windows(board):
-    for row in range(ROWS):
-        for col in range(COLS - CONNECT + 1):
-            yield [board[row][col + offset] for offset in range(CONNECT)]
+def _score_line(board, line, player, opponent):
+    own_count = 0
+    opponent_count = 0
+    empty_count = 0
 
-    for col in range(COLS):
-        for row in range(ROWS - CONNECT + 1):
-            yield [board[row + offset][col] for offset in range(CONNECT)]
-
-    for row in range(ROWS - CONNECT + 1):
-        for col in range(COLS - CONNECT + 1):
-            yield [board[row + offset][col + offset] for offset in range(CONNECT)]
-
-    for row in range(ROWS - CONNECT + 1):
-        for col in range(CONNECT - 1, COLS):
-            yield [board[row + offset][col - offset] for offset in range(CONNECT)]
-
-
-def _score_window(window, player):
-    opponent = _other_player(player)
-    own_count = window.count(player)
-    opponent_count = window.count(opponent)
-    empty_count = window.count(0)
+    for row, col in line:
+        cell = board[row][col]
+        if cell == player:
+            own_count += 1
+        elif cell == opponent:
+            opponent_count += 1
+        else:
+            empty_count += 1
 
     if own_count == 4:
         return 100_000

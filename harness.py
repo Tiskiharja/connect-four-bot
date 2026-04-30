@@ -11,6 +11,7 @@ from main import (
     _ordered_moves,
     _safe_moves,
     _valid_moves,
+    get_last_search_stats,
     make_move,
 )
 
@@ -22,6 +23,7 @@ class GameResult:
     final_board: list[list[int]]
     moves: list[tuple[int, int]] = field(default_factory=list)
     move_times: dict[int, list[float]] = field(default_factory=lambda: {1: [], 2: []})
+    search_stats: dict[int, list[dict]] = field(default_factory=lambda: {1: [], 2: []})
 
 
 def random_move(board, player):
@@ -69,10 +71,12 @@ def play_game(bots_by_player, time_limit_seconds=1.0):
 
         start = time.perf_counter()
         try:
-            col = bots_by_player[player](bot_board, player)
+            bot = bots_by_player[player]
+            col = bot(bot_board, player)
         except Exception as exc:
             elapsed = time.perf_counter() - start
             result.move_times[player].append(elapsed)
+            result.search_stats[player].append({})
             result.winner = 3 - player
             result.reason = f"player {player} crash: {type(exc).__name__}"
             result.final_board = board
@@ -80,6 +84,7 @@ def play_game(bots_by_player, time_limit_seconds=1.0):
 
         elapsed = time.perf_counter() - start
         result.move_times[player].append(elapsed)
+        result.search_stats[player].append(get_last_search_stats() if bot is make_move else {})
 
         if elapsed > time_limit_seconds:
             result.winner = 3 - player
@@ -123,6 +128,26 @@ def run_matches(bot_a_name, bot_b_name, games, seed, time_limit_seconds, alterna
         "b_time_count": 0,
         "a_time_max": 0.0,
         "b_time_max": 0.0,
+        "a_search_count": 0,
+        "b_search_count": 0,
+        "a_depth_total": 0,
+        "b_depth_total": 0,
+        "a_depth_max": 0,
+        "b_depth_max": 0,
+        "a_nodes_total": 0,
+        "b_nodes_total": 0,
+        "a_nodes_max": 0,
+        "b_nodes_max": 0,
+        "a_cache_hits": 0,
+        "b_cache_hits": 0,
+        "a_cache_stores": 0,
+        "b_cache_stores": 0,
+        "a_search_timeouts": 0,
+        "b_search_timeouts": 0,
+        "a_margin_min": None,
+        "b_margin_min": None,
+        "a_actions": {},
+        "b_actions": {},
         "results": [],
     }
 
@@ -157,7 +182,35 @@ def run_matches(bot_a_name, bot_b_name, games, seed, time_limit_seconds, alterna
             if times:
                 stats[f"{label}_time_max"] = max(stats[f"{label}_time_max"], max(times))
 
+        for player, metrics_by_move in result.search_stats.items():
+            label = labels_by_player[player]
+            for metrics in metrics_by_move:
+                if metrics:
+                    _add_search_metrics(stats, label, metrics)
+
     return stats
+
+
+def _add_search_metrics(stats, label, metrics):
+    stats[f"{label}_search_count"] += 1
+    stats[f"{label}_depth_total"] += metrics.get("depth_reached", 0)
+    stats[f"{label}_depth_max"] = max(stats[f"{label}_depth_max"], metrics.get("depth_reached", 0))
+    stats[f"{label}_nodes_total"] += metrics.get("nodes", 0)
+    stats[f"{label}_nodes_max"] = max(stats[f"{label}_nodes_max"], metrics.get("nodes", 0))
+    stats[f"{label}_cache_hits"] += metrics.get("cache_hits", 0)
+    stats[f"{label}_cache_stores"] += metrics.get("cache_stores", 0)
+
+    if metrics.get("timed_out"):
+        stats[f"{label}_search_timeouts"] += 1
+
+    margin = metrics.get("deadline_margin_seconds")
+    if margin is not None:
+        current_min = stats[f"{label}_margin_min"]
+        stats[f"{label}_margin_min"] = margin if current_min is None else min(current_min, margin)
+
+    action = metrics.get("action", "unknown")
+    actions = stats[f"{label}_actions"]
+    actions[action] = actions.get(action, 0) + 1
 
 
 def format_board(board):
@@ -172,6 +225,54 @@ def average_time(stats, label):
     return stats[f"{label}_time_total"] / count
 
 
+def average_search_depth(stats, label):
+    count = stats[f"{label}_search_count"]
+    if count == 0:
+        return 0.0
+    return stats[f"{label}_depth_total"] / count
+
+
+def average_nodes(stats, label):
+    count = stats[f"{label}_search_count"]
+    if count == 0:
+        return 0.0
+    return stats[f"{label}_nodes_total"] / count
+
+
+def cache_hit_rate(stats, label):
+    hits = stats[f"{label}_cache_hits"]
+    stores = stats[f"{label}_cache_stores"]
+    total = hits + stores
+    if total == 0:
+        return 0.0
+    return hits / total
+
+
+def format_actions(actions):
+    if not actions:
+        return "n/a"
+    return ", ".join(f"{name}:{count}" for name, count in sorted(actions.items()))
+
+
+def print_search_summary(stats, label, name):
+    count = stats[f"{label}_search_count"]
+    if count == 0:
+        print(f"bot {label.upper()} ({name}) search: n/a")
+        return
+
+    margin = stats[f"{label}_margin_min"]
+    margin_text = "n/a" if margin is None else f"{margin:.4f}s"
+    print(
+        f"bot {label.upper()} ({name}) search: "
+        f"depth avg/max {average_search_depth(stats, label):.2f}/{stats[f'{label}_depth_max']}, "
+        f"nodes avg/max {average_nodes(stats, label):.0f}/{stats[f'{label}_nodes_max']}, "
+        f"cache hit rate {cache_hit_rate(stats, label):.1%}, "
+        f"internal timeouts {stats[f'{label}_search_timeouts']}, "
+        f"min margin {margin_text}"
+    )
+    print(f"bot {label.upper()} actions: {format_actions(stats[f'{label}_actions'])}")
+
+
 def print_summary(args, stats):
     print(f"games: {args.games}")
     print(f"bot A ({args.bot_a}) wins: {stats['a_wins']}")
@@ -182,6 +283,8 @@ def print_summary(args, stats):
     print(f"crashes: {stats['crashes']}")
     print(f"bot A avg/max move: {average_time(stats, 'a'):.4f}s / {stats['a_time_max']:.4f}s")
     print(f"bot B avg/max move: {average_time(stats, 'b'):.4f}s / {stats['b_time_max']:.4f}s")
+    print_search_summary(stats, "a", args.bot_a)
+    print_search_summary(stats, "b", args.bot_b)
 
     if args.show_games:
         for game_index, (result, labels_by_player) in enumerate(stats["results"], start=1):

@@ -49,6 +49,14 @@ class HarnessTest(unittest.TestCase):
 
         self.assertEqual(stats["a_wins"] + stats["b_wins"] + stats["draws"], 2)
 
+    def test_run_matches_tracks_bot_search_metrics(self):
+        stats = run_matches("bot", "random", games=1, seed=1, time_limit_seconds=1.0, alternate_colors=False)
+
+        self.assertGreater(stats["a_search_count"], 0)
+        self.assertGreater(stats["a_depth_total"], 0)
+        self.assertGreater(stats["a_nodes_total"], 0)
+        self.assertEqual(stats["b_search_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
