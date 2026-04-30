@@ -16,19 +16,30 @@ Paste either file into the playground to play.
 
 **Pyodide compatibility:** Do not include `if __name__ == "__main__"` blocks when pasting into the playground. Pyodide sets `__name__` to `"__main__"`, so that code would execute during initialization. Both bots also defensively convert the board with `int()` since Pyodide's `toPy` may pass proxy objects rather than native Python lists.
 
-Run local checks:
+## Setup
+
+Requires Python 3.12+. Use [uv](https://docs.astral.sh/uv/) to manage the environment:
 
 ```bash
-python3 -m unittest discover -s tests
-python3 harness.py --bot-a bot --bot-b random --games 20 --seed 1
+uv python install 3.12
+```
+
+## Running
+
+```bash
+# Run all tests
+uv run python -m unittest discover -s tests
+
+# Run harness simulations
+uv run python harness.py --bot-a bot --bot-b random --games 20 --seed 1
 ```
 
 `harness.py` can run any two named bots against each other:
 
 ```bash
-python3 harness.py --bot-a bitboard --bot-b bot --games 20 --seed 1
-python3 harness.py --bot-a bot --bot-b tactical --games 10 --time-limit 1.0
-python3 harness.py --bot-a bot --bot-b bot --games 2 --show-games
+uv run python harness.py --bot-a bitboard --bot-b bot --games 20 --seed 1
+uv run python harness.py --bot-a bot --bot-b tactical --games 10 --time-limit 1.0
+uv run python harness.py --bot-a bot --bot-b bot --games 2 --show-games
 ```
 
 Colors alternate by default so both bots get games as red and yellow. Use `--fixed-colors`

@@ -10,15 +10,15 @@ Connect Four bot designed for a playground environment. The bot implements itera
 
 ```bash
 # Run all tests
-python3 -m unittest discover -s tests
+uv run python -m unittest discover -s tests
 
 # Run a single test file
-python3 -m unittest tests.test_bot
-python3 -m unittest tests.test_harness
+uv run python -m unittest tests.test_bot
+uv run python -m unittest tests.test_harness
 
 # Run harness simulations
-python3 harness.py --bot-a bot --bot-b random --games 20 --seed 1
-python3 harness.py --bot-a bot --bot-b tactical --games 10 --show-games
+uv run python harness.py --bot-a bot --bot-b random --games 20 --seed 1
+uv run python harness.py --bot-a bot --bot-b tactical --games 10 --show-games
 ```
 
 ## Architecture
