@@ -3,6 +3,8 @@ import random
 import time
 from dataclasses import dataclass, field
 
+from bitboard_bot import make_move as bitboard_make_move
+from bitboard_bot import get_last_search_stats as bitboard_get_last_search_stats
 from main import (
     COLS,
     ROWS,
@@ -53,6 +55,7 @@ def tactical_move(board, player):
 
 
 BOTS = {
+    "bitboard": bitboard_make_move,
     "bot": make_move,
     "tactical": tactical_move,
     "center": center_move,
@@ -84,7 +87,13 @@ def play_game(bots_by_player, time_limit_seconds=1.0):
 
         elapsed = time.perf_counter() - start
         result.move_times[player].append(elapsed)
-        result.search_stats[player].append(get_last_search_stats() if bot is make_move else {})
+        if bot is make_move:
+            search_stats = get_last_search_stats()
+        elif bot is bitboard_make_move:
+            search_stats = bitboard_get_last_search_stats()
+        else:
+            search_stats = {}
+        result.search_stats[player].append(search_stats)
 
         if elapsed > time_limit_seconds:
             result.winner = 3 - player
