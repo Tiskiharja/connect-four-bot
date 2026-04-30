@@ -34,3 +34,5 @@ playground limit.
 Internally, `make_move` converts the playground's `list[list[int]]` board into a compact
 row-major tuple plus column heights before searching. The playground API remains unchanged.
 Search uses last-move-aware win checks and tactical move ordering to prune more of the tree.
+The evaluator derives playable winning columns during its line scan, so it avoids extra
+drop simulations at leaf nodes.

@@ -467,8 +467,16 @@ def _evaluate_position(cells, heights, player):
     score += center_count * 6
     score -= opponent_center_count * 6
 
-    player_wins = len(_position_winning_moves(cells, heights, player))
-    opponent_wins = len(_position_winning_moves(cells, heights, opponent))
+    line_score, player_winning_cols, opponent_winning_cols = _score_lines_and_wins(
+        cells,
+        heights,
+        player,
+        opponent,
+    )
+    score += line_score
+
+    player_wins = len(player_winning_cols)
+    opponent_wins = len(opponent_winning_cols)
     score += player_wins * 4_000
     score -= opponent_wins * 5_000
 
@@ -477,16 +485,93 @@ def _evaluate_position(cells, heights, player):
     if opponent_wins >= 2:
         score -= 25_000
 
-    for line in WIN_LINE_INDEXES:
-        score += _score_line(cells, line, player, opponent)
-
     return score
 
 
-def _score_line(cells, line, player, opponent):
+def _score_lines_and_wins(cells, heights, player, opponent):
+    score = 0
+    player_winning_cols = set()
+    opponent_winning_cols = set()
+
+    for line in WIN_LINE_INDEXES:
+        line_score, player_win_col, opponent_win_col = _score_line(cells, heights, line, player, opponent)
+        score += line_score
+
+        if player_win_col is not None:
+            player_winning_cols.add(player_win_col)
+        if opponent_win_col is not None:
+            opponent_winning_cols.add(opponent_win_col)
+
+    return score, player_winning_cols, opponent_winning_cols
+
+
+def _threat_summary(cells, heights, player):
+    opponent = _other_player(player)
+    summary = {
+        "playable": 0,
+        "near": 0,
+        "floating": 0,
+        "preferred_playable": 0,
+        "preferred_near": 0,
+        "playable_cols": set(),
+    }
+
+    for line in WIN_LINE_INDEXES:
+        own_count = 0
+        opponent_count = 0
+        empty_count = 0
+        empty_index = None
+
+        for index in line:
+            cell = cells[index]
+            if cell == player:
+                own_count += 1
+            elif cell == opponent:
+                opponent_count += 1
+            else:
+                empty_count += 1
+                empty_index = index
+
+        if own_count != 3 or opponent_count != 0 or empty_count != 1:
+            continue
+
+        distance = _empty_support_distance(empty_index, heights)
+        _, col = divmod(empty_index, COLS)
+
+        if distance == 0:
+            summary["playable"] += 1
+            summary["playable_cols"].add(col)
+            if _is_preferred_threat_row(empty_index, player):
+                summary["preferred_playable"] += 1
+        elif distance == 1:
+            summary["near"] += 1
+            if _is_preferred_threat_row(empty_index, player):
+                summary["preferred_near"] += 1
+        else:
+            summary["floating"] += 1
+
+    return summary
+
+
+def _empty_support_distance(index, heights):
+    row, col = divmod(index, COLS)
+    next_open_row = ROWS - 1 - heights[col]
+    return max(0, next_open_row - row)
+
+
+def _is_preferred_threat_row(index, player):
+    row, _ = divmod(index, COLS)
+    row_from_bottom = ROWS - row
+    if player == 1:
+        return row_from_bottom % 2 == 1
+    return row_from_bottom % 2 == 0
+
+
+def _score_line(cells, heights, line, player, opponent):
     own_count = 0
     opponent_count = 0
     empty_count = 0
+    empty_index = None
 
     for index in line:
         cell = cells[index]
@@ -496,25 +581,33 @@ def _score_line(cells, line, player, opponent):
             opponent_count += 1
         else:
             empty_count += 1
+            empty_index = index
 
     if own_count == 4:
-        return 100_000
+        return 100_000, None, None
     if opponent_count == 4:
-        return -100_000
+        return -100_000, None, None
     if own_count == 3 and empty_count == 1:
-        return 100
+        return 100, _playable_threat_col(empty_index, heights), None
     if own_count == 2 and empty_count == 2:
-        return 10
+        return 10, None, None
     if own_count == 1 and empty_count == 3:
-        return 1
+        return 1, None, None
     if opponent_count == 3 and empty_count == 1:
-        return -120
+        return -120, None, _playable_threat_col(empty_index, heights)
     if opponent_count == 2 and empty_count == 2:
-        return -12
+        return -12, None, None
     if opponent_count == 1 and empty_count == 3:
-        return -1
+        return -1, None, None
 
-    return 0
+    return 0, None, None
+
+
+def _playable_threat_col(index, heights):
+    if _empty_support_distance(index, heights) == 0:
+        _, col = divmod(index, COLS)
+        return col
+    return None
 
 
 def main():

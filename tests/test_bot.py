@@ -10,6 +10,8 @@ from main import (
     WIN_LINES,
     _board_to_position,
     _drop_piece,
+    _empty_support_distance,
+    _evaluate_board,
     _has_won,
     _ordered_position_moves,
     _position_drop,
@@ -18,6 +20,7 @@ from main import (
     _position_has_won_at,
     _position_valid_moves,
     _safe_moves,
+    _threat_summary,
     get_last_search_stats,
     make_move,
 )
@@ -64,6 +67,53 @@ class ConnectFourBotTest(unittest.TestCase):
         self.assertTrue(_has_won(board, 1))
         self.assertTrue(_position_has_won(cells, 1))
         self.assertTrue(_position_has_won_at(cells, 1, 5 * COLS + 3))
+
+    def test_threat_summary_distinguishes_playable_threat(self):
+        board = empty_board()
+        board[5][0] = 1
+        board[5][1] = 1
+        board[5][2] = 1
+        cells, heights = _board_to_position(board)
+        threat_index = 5 * COLS + 3
+
+        summary = _threat_summary(cells, heights, 1)
+
+        self.assertEqual(_empty_support_distance(threat_index, heights), 0)
+        self.assertIn(3, summary["playable_cols"])
+        self.assertGreaterEqual(summary["playable"], 1)
+
+    def test_threat_summary_distinguishes_near_threat(self):
+        board = empty_board()
+        board[5][0] = 2
+        board[5][1] = 2
+        board[5][2] = 2
+        board[4][0] = 1
+        board[4][1] = 1
+        board[4][2] = 1
+        cells, heights = _board_to_position(board)
+        threat_index = 4 * COLS + 3
+
+        summary = _threat_summary(cells, heights, 1)
+
+        self.assertEqual(_empty_support_distance(threat_index, heights), 1)
+        self.assertNotIn(3, summary["playable_cols"])
+        self.assertGreaterEqual(summary["near"], 1)
+
+    def test_evaluator_values_playable_threat_more_than_near_threat(self):
+        playable = empty_board()
+        playable[5][0] = 1
+        playable[5][1] = 1
+        playable[5][2] = 1
+
+        near = empty_board()
+        near[5][0] = 2
+        near[5][1] = 2
+        near[5][2] = 2
+        near[4][0] = 1
+        near[4][1] = 1
+        near[4][2] = 1
+
+        self.assertGreater(_evaluate_board(playable, 1), _evaluate_board(near, 1))
 
     def test_empty_board_prefers_center(self):
         self.assertEqual(make_move(empty_board(), 1), 3)
