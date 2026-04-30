@@ -18,6 +18,14 @@ BOARD_MASK = 0
 for _c in range(COLS):
     BOARD_MASK |= COLUMN_MASKS[_c]
 
+# Use int.bit_count() on 3.10+, fall back to bin().count('1')
+if hasattr(int, 'bit_count'):
+    def _popcount(x):
+        return x.bit_count()
+else:
+    def _popcount(x):
+        return bin(x).count('1')
+
 # Transposition table flags
 FLAG_EXACT = 0
 FLAG_LOWER = 1
@@ -106,7 +114,12 @@ def make_move(board, player):
         _record_stats(stats, blocking_cols[0], "immediate_block", start, deadline)
         return int(blocking_cols[0])
 
-    best_col = _iterative_deepening(position, mask, num_moves, valid_cols, deadline, stats)
+    safe_cols = _get_safe_columns(position, mask, valid_cols)
+    search_cols = safe_cols or valid_cols
+    stats["safe_moves"] = len(safe_cols)
+    stats["candidate_moves"] = len(search_cols)
+
+    best_col = _iterative_deepening(position, mask, num_moves, search_cols, deadline, stats)
 
     if best_col in valid_cols:
         _record_stats(stats, best_col, "search", start, deadline)
@@ -146,6 +159,26 @@ def _make_move_bb(position, mask, col):
     return new_position, new_mask
 
 
+def _get_safe_columns(position, mask, valid_cols):
+    """Filter out moves that give the opponent an immediate win."""
+    safe = []
+    for col in valid_cols:
+        new_pos, new_mask = _make_move_bb(position, mask, col)
+        # After our move, opponent is `new_pos` (perspective swapped).
+        # Check if opponent can win on their next move.
+        opponent_wins = False
+        for opp_col in range(COLS):
+            if not _can_play(new_mask, opp_col):
+                continue
+            opp_placed = new_pos | ((new_mask + BOTTOM_BITS[opp_col]) & COLUMN_MASKS[opp_col])
+            if _is_winning(opp_placed):
+                opponent_wins = True
+                break
+        if not opponent_wins:
+            safe.append(col)
+    return safe
+
+
 def _is_winning(position):
     # Horizontal (shift by 7 = one column apart)
     m = position & (position >> 7)
@@ -166,6 +199,36 @@ def _is_winning(position):
     return False
 
 
+def _order_moves_tactically(position, mask, valid_cols):
+    """Score and sort moves by tactical value: wins, threats, blocks, center."""
+    scored = []
+    for col in valid_cols:
+        score = 10 - abs(3 - col)  # center preference
+
+        # Check if this move wins
+        placed = position | ((mask + BOTTOM_BITS[col]) & COLUMN_MASKS[col])
+        if _is_winning(placed):
+            score += 1_000_000
+        else:
+            new_pos, new_mask = _make_move_bb(position, mask, col)
+            # Count opponent winning responses (bad for us)
+            opp_wins = 0
+            # Count our winning follow-ups after opponent plays (good for us)
+            for next_col in range(COLS):
+                if not _can_play(new_mask, next_col):
+                    continue
+                opp_placed = new_pos | ((new_mask + BOTTOM_BITS[next_col]) & COLUMN_MASKS[next_col])
+                if _is_winning(opp_placed):
+                    opp_wins += 1
+            if opp_wins:
+                score -= 100_000 + opp_wins * 10_000
+
+        scored.append((score, col))
+
+    scored.sort(reverse=True)
+    return [col for _, col in scored]
+
+
 def _iterative_deepening(position, mask, num_moves, valid_cols, deadline, stats):
     if not valid_cols:
         return 0
@@ -173,7 +236,7 @@ def _iterative_deepening(position, mask, num_moves, valid_cols, deadline, stats)
     best_col = valid_cols[0]
     tt = {}
     max_possible_depth = ROWS * COLS - num_moves
-    ordered = list(valid_cols)
+    ordered = _order_moves_tactically(position, mask, valid_cols)
     start = time.perf_counter()
 
     for depth in range(1, max_possible_depth + 1):
@@ -279,9 +342,18 @@ def _negamax(position, mask, num_moves, depth, alpha, beta, tt, deadline, stats)
     best_col = valid_cols[0]
     original_alpha = alpha
 
-    for col in valid_cols:
+    for i, col in enumerate(valid_cols):
         new_pos, new_mask = _make_move_bb(position, mask, col)
-        score = -_negamax(new_pos, new_mask, num_moves + 1, depth - 1, -beta, -alpha, tt, deadline, stats)
+
+        if i == 0:
+            # First move: full window search
+            score = -_negamax(new_pos, new_mask, num_moves + 1, depth - 1, -beta, -alpha, tt, deadline, stats)
+        else:
+            # Null window search
+            score = -_negamax(new_pos, new_mask, num_moves + 1, depth - 1, -alpha - 1, -alpha, tt, deadline, stats)
+            if alpha < score < beta:
+                # Re-search with full window
+                score = -_negamax(new_pos, new_mask, num_moves + 1, depth - 1, -beta, -score, tt, deadline, stats)
 
         if score > best_score:
             best_score = score
@@ -309,8 +381,8 @@ def _evaluate_bb(position, mask):
     score = 0
 
     for line_mask in LINE_MASKS:
-        own = bin(position & line_mask).count('1')
-        opp = bin(opponent & line_mask).count('1')
+        own = _popcount(position & line_mask)
+        opp = _popcount(opponent & line_mask)
         if opp == 0:
             if own == 3:
                 score += 100
@@ -328,8 +400,8 @@ def _evaluate_bb(position, mask):
 
     # Center column bonus
     center_mask = COLUMN_MASKS[3]
-    score += bin(position & center_mask).count('1') * 6
-    score -= bin(opponent & center_mask).count('1') * 6
+    score += _popcount(position & center_mask) * 6
+    score -= _popcount(opponent & center_mask) * 6
 
     return score
 
