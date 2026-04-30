@@ -62,6 +62,9 @@ def make_move(board, player):
     player : int -- which player we are (1 or 2)
     return : int -- column to drop our piece into (0-6)
     """
+    # Defensive conversion for Pyodide (board may be a JsProxy, not a native list)
+    board = [[int(cell) for cell in row] for row in board]
+    player = int(player)
     start = time.perf_counter()
     deadline = start + MOVE_TIME_LIMIT_SECONDS
     stats = _new_search_stats(board, player)
@@ -605,10 +608,3 @@ def _playable_threat_col(index, heights):
     return None
 
 
-def main():
-    empty_board = [[0 for _ in range(COLS)] for _ in range(ROWS)]
-    print(make_move(empty_board, 1))
-
-
-if __name__ == "__main__":
-    main()

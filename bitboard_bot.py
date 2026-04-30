@@ -71,6 +71,9 @@ def get_last_search_stats():
 
 
 def make_move(board, player):
+    # Defensive conversion for Pyodide (board may be a JsProxy, not a native list)
+    board = [[int(cell) for cell in row] for row in board]
+    player = int(player)
     start = time.perf_counter()
     deadline = start + MOVE_TIME_LIMIT_SECONDS
     position, mask, num_moves = _board_to_bitboard(board, player)
@@ -89,7 +92,7 @@ def make_move(board, player):
         placed = position | ((mask + BOTTOM_BITS[col]) & COLUMN_MASKS[col])
         if _is_winning(placed):
             _record_stats(stats, col, "immediate_win", start, deadline)
-            return col
+            return int(col)
 
     # Block an immediate loss.
     opponent = position ^ mask
@@ -99,23 +102,19 @@ def make_move(board, player):
         if _is_winning(opp_placed):
             blocking_cols.append(col)
 
-    if len(blocking_cols) == 1:
+    if blocking_cols:
         _record_stats(stats, blocking_cols[0], "immediate_block", start, deadline)
-        return blocking_cols[0]
-    if len(blocking_cols) > 1:
-        # Multiple threats — likely lost, but block one
-        _record_stats(stats, blocking_cols[0], "immediate_block", start, deadline)
-        return blocking_cols[0]
+        return int(blocking_cols[0])
 
     best_col = _iterative_deepening(position, mask, num_moves, valid_cols, deadline, stats)
 
     if best_col in valid_cols:
         _record_stats(stats, best_col, "search", start, deadline)
-        return best_col
+        return int(best_col)
 
     fallback = valid_cols[0]
     _record_stats(stats, fallback, "fallback", start, deadline)
-    return fallback
+    return int(fallback)
 
 
 def _board_to_bitboard(board, player):
@@ -368,10 +367,3 @@ def _record_stats(stats, selected_move, action, start, deadline):
     _LAST_SEARCH_STATS = dict(stats)
 
 
-def main():
-    empty_board = [[0 for _ in range(COLS)] for _ in range(ROWS)]
-    print(make_move(empty_board, 1))
-
-
-if __name__ == "__main__":
-    main()
