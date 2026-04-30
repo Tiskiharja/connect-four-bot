@@ -5,9 +5,14 @@ from main import (
     COLS,
     MOVE_TIME_LIMIT_SECONDS,
     ROWS,
+    WIN_LINE_INDEXES,
     WIN_LINES,
+    _board_to_position,
     _drop_piece,
     _has_won,
+    _position_drop,
+    _position_has_won,
+    _position_valid_moves,
     _safe_moves,
     get_last_search_stats,
     make_move,
@@ -18,10 +23,39 @@ def empty_board():
     return [[0 for _ in range(COLS)] for _ in range(ROWS)]
 
 
+def _valid_columns(board):
+    return [col for col in range(COLS) if board[0][col] == 0]
+
+
 class ConnectFourBotTest(unittest.TestCase):
     def test_precomputes_classic_board_win_lines(self):
         self.assertEqual(len(WIN_LINES), 69)
         self.assertEqual(len(set(WIN_LINES)), 69)
+        self.assertEqual(len(WIN_LINE_INDEXES), 69)
+        self.assertEqual(len(set(WIN_LINE_INDEXES)), 69)
+
+    def test_compact_position_matches_board_drop(self):
+        board = empty_board()
+        board[5][3] = 1
+        cells, heights = _board_to_position(board)
+
+        next_board = _drop_piece(board, 3, 2)
+        next_cells, next_heights = _position_drop(cells, heights, 3, 2)
+
+        self.assertEqual(next_cells, tuple(cell for row in next_board for cell in row))
+        self.assertEqual(next_heights[3], 2)
+        self.assertEqual(_position_valid_moves(next_heights), _valid_columns(next_board))
+
+    def test_compact_position_detects_win(self):
+        board = empty_board()
+        board[5][0] = 1
+        board[5][1] = 1
+        board[5][2] = 1
+        board[5][3] = 1
+        cells, _ = _board_to_position(board)
+
+        self.assertTrue(_has_won(board, 1))
+        self.assertTrue(_position_has_won(cells, 1))
 
     def test_empty_board_prefers_center(self):
         self.assertEqual(make_move(empty_board(), 1), 3)

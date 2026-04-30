@@ -30,3 +30,6 @@ For the main bot, the harness also reports search depth, searched nodes, cache h
 internal iterative-deepening timeouts, action mix, and remaining time-budget margin.
 The bot uses an internal 0.85 second move budget to leave room under a 1.0 second
 playground limit.
+
+Internally, `make_move` converts the playground's `list[list[int]]` board into a compact
+row-major tuple plus column heights before searching. The playground API remains unchanged.

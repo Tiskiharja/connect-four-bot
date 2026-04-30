@@ -39,6 +39,11 @@ def _build_win_lines():
 
 
 WIN_LINES = _build_win_lines()
+WIN_LINE_INDEXES = tuple(
+    tuple(row * COLS + col for row, col in line)
+    for line in WIN_LINES
+)
+CENTER_INDEXES = tuple(row * COLS + COLS // 2 for row in range(ROWS))
 
 
 def get_last_search_stats():
@@ -56,8 +61,9 @@ def make_move(board, player):
     start = time.perf_counter()
     deadline = start + MOVE_TIME_LIMIT_SECONDS
     stats = _new_search_stats(board, player)
+    cells, heights = _board_to_position(board)
 
-    valid_moves = _valid_moves(board)
+    valid_moves = _position_valid_moves(heights)
     stats["valid_moves"] = len(valid_moves)
 
     if not valid_moves:
@@ -68,26 +74,26 @@ def make_move(board, player):
 
     # Take a win immediately.
     for col in _ordered_moves(valid_moves):
-        next_board = _drop_piece(board, col, player)
-        if _has_won(next_board, player):
+        next_cells, _ = _position_drop(cells, heights, col, player)
+        if _position_has_won(next_cells, player):
             _record_search_stats(stats, col, "immediate_win", start, deadline)
             return col
 
     # Block an immediate loss.
     for col in _ordered_moves(valid_moves):
-        next_board = _drop_piece(board, col, opponent)
-        if _has_won(next_board, opponent):
+        next_cells, _ = _position_drop(cells, heights, col, opponent)
+        if _position_has_won(next_cells, opponent):
             _record_search_stats(stats, col, "immediate_block", start, deadline)
             return col
 
-    safe_moves = _safe_moves(board, valid_moves, player)
+    safe_moves = _position_safe_moves(cells, heights, valid_moves, player)
     search_moves = safe_moves or valid_moves
     stats["safe_moves"] = len(safe_moves)
     stats["candidate_moves"] = len(search_moves)
 
-    max_depth = _max_search_depth(board)
+    max_depth = _max_search_depth(stats["pieces"])
     stats["max_depth"] = max_depth
-    best_col = _choose_search_move(board, max_depth, search_moves, player, deadline, stats)
+    best_col = _choose_search_move(cells, heights, max_depth, search_moves, player, deadline, stats)
 
     if best_col in valid_moves:
         _record_search_stats(stats, best_col, "search", start, deadline)
@@ -132,8 +138,7 @@ def _record_search_stats(stats, selected_move, action, start, deadline):
     _LAST_SEARCH_STATS = dict(stats)
 
 
-def _max_search_depth(board):
-    pieces = sum(1 for row in board for cell in row if cell != 0)
+def _max_search_depth(pieces):
     if pieces >= 28:
         return 9
     if pieces >= 14:
@@ -141,7 +146,7 @@ def _max_search_depth(board):
     return 5
 
 
-def _choose_search_move(board, max_depth, candidate_moves, player, deadline, stats):
+def _choose_search_move(cells, heights, max_depth, candidate_moves, player, deadline, stats):
     ordered = _ordered_moves(candidate_moves)
     if not ordered:
         return 0
@@ -155,7 +160,7 @@ def _choose_search_move(board, max_depth, candidate_moves, player, deadline, sta
             break
 
         try:
-            score, col = _search_root(board, depth, ordered, opponent, player, cache, deadline, stats)
+            score, col = _search_root(cells, heights, depth, ordered, opponent, player, cache, deadline, stats)
         except _SearchTimeout:
             stats["timed_out"] = True
             break
@@ -173,7 +178,7 @@ def _choose_search_move(board, max_depth, candidate_moves, player, deadline, sta
     return best_col
 
 
-def _search_root(board, depth, ordered_moves, next_player, root_player, cache, deadline, stats):
+def _search_root(cells, heights, depth, ordered_moves, next_player, root_player, cache, deadline, stats):
     best_score = -float("inf")
     best_col = ordered_moves[0]
     alpha = -float("inf")
@@ -184,8 +189,19 @@ def _search_root(board, depth, ordered_moves, next_player, root_player, cache, d
             raise _SearchTimeout
 
         stats["root_moves"] += 1
-        next_board = _drop_piece(board, col, root_player)
-        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline, stats)
+        next_cells, next_heights = _position_drop(cells, heights, col, root_player)
+        score, _ = _minimax(
+            next_cells,
+            next_heights,
+            depth - 1,
+            alpha,
+            beta,
+            next_player,
+            root_player,
+            cache,
+            deadline,
+            stats,
+        )
 
         if score > best_score:
             best_score = score
@@ -196,27 +212,27 @@ def _search_root(board, depth, ordered_moves, next_player, root_player, cache, d
     return best_score, best_col
 
 
-def _minimax(board, depth, alpha, beta, current_player, root_player, cache, deadline, stats):
+def _minimax(cells, heights, depth, alpha, beta, current_player, root_player, cache, deadline, stats):
     if _time_is_up(deadline):
         raise _SearchTimeout
 
     stats["nodes"] += 1
 
-    cache_key = (_board_key(board), depth, current_player, root_player)
+    cache_key = (cells, depth, current_player, root_player)
     cached = cache.get(cache_key)
     if cached is not None:
         stats["cache_hits"] += 1
         return cached
 
-    valid_moves = _valid_moves(board)
+    valid_moves = _position_valid_moves(heights)
     root_opponent = _other_player(root_player)
 
-    if _has_won(board, root_player):
+    if _position_has_won(cells, root_player):
         return WIN_SCORE + depth, None
-    if _has_won(board, root_opponent):
+    if _position_has_won(cells, root_opponent):
         return -WIN_SCORE - depth, None
     if depth == 0 or not valid_moves:
-        return _evaluate_board(board, root_player), None
+        return _evaluate_position(cells, heights, root_player), None
 
     ordered = _ordered_moves(valid_moves)
     next_player = _other_player(current_player)
@@ -227,8 +243,19 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache, dead
         best_col = ordered[0]
 
         for col in ordered:
-            next_board = _drop_piece(board, col, current_player)
-            score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline, stats)
+            next_cells, next_heights = _position_drop(cells, heights, col, current_player)
+            score, _ = _minimax(
+                next_cells,
+                next_heights,
+                depth - 1,
+                alpha,
+                beta,
+                next_player,
+                root_player,
+                cache,
+                deadline,
+                stats,
+            )
 
             if score > best_score:
                 best_score = score
@@ -248,8 +275,19 @@ def _minimax(board, depth, alpha, beta, current_player, root_player, cache, dead
     best_col = ordered[0]
 
     for col in ordered:
-        next_board = _drop_piece(board, col, current_player)
-        score, _ = _minimax(next_board, depth - 1, alpha, beta, next_player, root_player, cache, deadline, stats)
+        next_cells, next_heights = _position_drop(cells, heights, col, current_player)
+        score, _ = _minimax(
+            next_cells,
+            next_heights,
+            depth - 1,
+            alpha,
+            beta,
+            next_player,
+            root_player,
+            cache,
+            deadline,
+            stats,
+        )
 
         if score < best_score:
             best_score = score
@@ -277,8 +315,52 @@ def _time_is_up(deadline):
     return time.perf_counter() >= deadline
 
 
-def _board_key(board):
-    return tuple(tuple(row) for row in board)
+def _board_to_position(board):
+    cells = tuple(cell for row in board for cell in row)
+    heights = tuple(sum(1 for row in range(ROWS) if board[row][col] != 0) for col in range(COLS))
+    return cells, heights
+
+
+def _position_valid_moves(heights):
+    return [col for col in range(COLS) if heights[col] < ROWS]
+
+
+def _position_drop(cells, heights, col, player):
+    row = ROWS - 1 - heights[col]
+    index = row * COLS + col
+    next_cells = cells[:index] + (player,) + cells[index + 1 :]
+    next_heights = heights[:col] + (heights[col] + 1,) + heights[col + 1 :]
+    return next_cells, next_heights
+
+
+def _position_has_won(cells, player):
+    for a, b, c, d in WIN_LINE_INDEXES:
+        if cells[a] == player and cells[b] == player and cells[c] == player and cells[d] == player:
+            return True
+    return False
+
+
+def _position_safe_moves(cells, heights, valid_moves, player):
+    opponent = _other_player(player)
+    safe = []
+
+    for col in valid_moves:
+        next_cells, next_heights = _position_drop(cells, heights, col, player)
+        if not _position_winning_moves(next_cells, next_heights, opponent):
+            safe.append(col)
+
+    return safe
+
+
+def _position_winning_moves(cells, heights, player):
+    wins = []
+
+    for col in _ordered_moves(_position_valid_moves(heights)):
+        next_cells, _ = _position_drop(cells, heights, col, player)
+        if _position_has_won(next_cells, player):
+            wins.append(col)
+
+    return wins
 
 
 def _valid_moves(board):
@@ -290,26 +372,13 @@ def _ordered_moves(valid_moves):
 
 
 def _safe_moves(board, valid_moves, player):
-    opponent = _other_player(player)
-    safe = []
-
-    for col in valid_moves:
-        next_board = _drop_piece(board, col, player)
-        if not _winning_moves(next_board, opponent):
-            safe.append(col)
-
-    return safe
+    cells, heights = _board_to_position(board)
+    return _position_safe_moves(cells, heights, valid_moves, player)
 
 
 def _winning_moves(board, player):
-    wins = []
-
-    for col in _ordered_moves(_valid_moves(board)):
-        next_board = _drop_piece(board, col, player)
-        if _has_won(next_board, player):
-            wins.append(col)
-
-    return wins
+    cells, heights = _board_to_position(board)
+    return _position_winning_moves(cells, heights, player)
 
 
 def _drop_piece(board, col, player):
@@ -333,16 +402,21 @@ def _has_won(board, player):
 
 
 def _evaluate_board(board, player):
+    cells, heights = _board_to_position(board)
+    return _evaluate_position(cells, heights, player)
+
+
+def _evaluate_position(cells, heights, player):
     opponent = _other_player(player)
     score = 0
 
-    center_count = sum(1 for row in range(ROWS) if board[row][COLS // 2] == player)
-    opponent_center_count = sum(1 for row in range(ROWS) if board[row][COLS // 2] == opponent)
+    center_count = sum(1 for index in CENTER_INDEXES if cells[index] == player)
+    opponent_center_count = sum(1 for index in CENTER_INDEXES if cells[index] == opponent)
     score += center_count * 6
     score -= opponent_center_count * 6
 
-    player_wins = len(_winning_moves(board, player))
-    opponent_wins = len(_winning_moves(board, opponent))
+    player_wins = len(_position_winning_moves(cells, heights, player))
+    opponent_wins = len(_position_winning_moves(cells, heights, opponent))
     score += player_wins * 4_000
     score -= opponent_wins * 5_000
 
@@ -351,19 +425,19 @@ def _evaluate_board(board, player):
     if opponent_wins >= 2:
         score -= 25_000
 
-    for line in WIN_LINES:
-        score += _score_line(board, line, player, opponent)
+    for line in WIN_LINE_INDEXES:
+        score += _score_line(cells, line, player, opponent)
 
     return score
 
 
-def _score_line(board, line, player, opponent):
+def _score_line(cells, line, player, opponent):
     own_count = 0
     opponent_count = 0
     empty_count = 0
 
-    for row, col in line:
-        cell = board[row][col]
+    for index in line:
+        cell = cells[index]
         if cell == player:
             own_count += 1
         elif cell == opponent:
