@@ -5,13 +5,17 @@ from main import (
     COLS,
     MOVE_TIME_LIMIT_SECONDS,
     ROWS,
+    WIN_LINES_BY_INDEX,
     WIN_LINE_INDEXES,
     WIN_LINES,
     _board_to_position,
     _drop_piece,
     _has_won,
+    _ordered_position_moves,
     _position_drop,
+    _position_drop_with_index,
     _position_has_won,
+    _position_has_won_at,
     _position_valid_moves,
     _safe_moves,
     get_last_search_stats,
@@ -33,6 +37,8 @@ class ConnectFourBotTest(unittest.TestCase):
         self.assertEqual(len(set(WIN_LINES)), 69)
         self.assertEqual(len(WIN_LINE_INDEXES), 69)
         self.assertEqual(len(set(WIN_LINE_INDEXES)), 69)
+        self.assertEqual(len(WIN_LINES_BY_INDEX), ROWS * COLS)
+        self.assertTrue(all(WIN_LINES_BY_INDEX))
 
     def test_compact_position_matches_board_drop(self):
         board = empty_board()
@@ -40,10 +46,11 @@ class ConnectFourBotTest(unittest.TestCase):
         cells, heights = _board_to_position(board)
 
         next_board = _drop_piece(board, 3, 2)
-        next_cells, next_heights = _position_drop(cells, heights, 3, 2)
+        next_cells, next_heights, last_index = _position_drop_with_index(cells, heights, 3, 2)
 
         self.assertEqual(next_cells, tuple(cell for row in next_board for cell in row))
         self.assertEqual(next_heights[3], 2)
+        self.assertEqual(last_index, 4 * COLS + 3)
         self.assertEqual(_position_valid_moves(next_heights), _valid_columns(next_board))
 
     def test_compact_position_detects_win(self):
@@ -56,6 +63,7 @@ class ConnectFourBotTest(unittest.TestCase):
 
         self.assertTrue(_has_won(board, 1))
         self.assertTrue(_position_has_won(cells, 1))
+        self.assertTrue(_position_has_won_at(cells, 1, 5 * COLS + 3))
 
     def test_empty_board_prefers_center(self):
         self.assertEqual(make_move(empty_board(), 1), 3)
@@ -127,6 +135,17 @@ class ConnectFourBotTest(unittest.TestCase):
 
         self.assertNotIn(3, _safe_moves(board, list(range(COLS)), 1))
         self.assertNotEqual(make_move(board, 1), 3)
+
+    def test_tactical_ordering_prioritizes_winning_move(self):
+        board = empty_board()
+        board[5][0] = 1
+        board[5][1] = 1
+        board[5][2] = 1
+        cells, heights = _board_to_position(board)
+
+        ordered = _ordered_position_moves(cells, heights, list(range(COLS)), 1, tactical=True)
+
+        self.assertEqual(ordered[0], 3)
 
     def test_move_stays_under_one_second_budget(self):
         start = time.perf_counter()
